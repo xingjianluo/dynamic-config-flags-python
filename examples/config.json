@@ -1,0 +1,18 @@
+{
+  "service_name": "dynamic-config-service",
+  "max_connections": 200,
+  "request_timeout_ms": 5000,
+  "debug": false,
+  "flags": {
+    "new-checkout": {
+      "enabled": true,
+      "percentage": 10,
+      "allowlist": ["internal-tester", "vip-001"]
+    },
+    "legacy-api": {
+      "enabled": false,
+      "percentage": 0,
+      "allowlist": []
+    }
+  }
+}
