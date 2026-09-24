@@ -1,8 +1,8 @@
-from fastapi import FastAPI
+from app.service import create_app
 
-app = FastAPI()
+app = create_app()
 
+if __name__ == "__main__":
+    import uvicorn
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
+    uvicorn.run(app, host="0.0.0.0", port=8000)
