@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 # 启动时分层加载（默认值 < 文件 < 环境变量），非法配置直接启动失败
 _bootstrap, _provenance = load_bootstrap(os.environ.get("DYNAMIC_CONFIG_FILE"))
-store = ConfigStore(_bootstrap)
+store = ConfigStore(_bootstrap, _provenance)
 logger.info("启动加载完成: 配置=%s 来源=%s", _bootstrap, _provenance)
 
 app = FastAPI(title="dynamic-config-flags")
@@ -38,7 +38,7 @@ def get_config() -> dict:
     return {
         "version": store.version,
         "config": store.get_config(),
-        "provenance": _provenance,
+        "provenance": store.get_provenance(),
         "versions": store.history_versions(),
     }
 
@@ -65,6 +65,26 @@ def rollback_config(req: RollbackRequest) -> dict:
         raise HTTPException(status_code=404, detail={"reason": exc.reason.value, "detail": exc.detail})
     logger.info("回滚生效: target=%s 新版本=%s", req.target_version, new_version)
     return {"version": new_version, "config": store.get_config()}
+
+
+@app.get("/config/audit")
+def get_audit_log() -> dict:
+    """查询变更审计记录（按时间从旧到新，含版本、时间、变更明细）。"""
+    records = store.get_audit_log()
+    logger.info("查询审计: 返回 %d 条记录", len(records))
+    return {"capacity": store.audit_capacity, "records": [asdict(r) for r in records]}
+
+
+@app.post("/config/dry-run")
+def dry_run_config(req: UpdateRequest) -> dict:
+    """只读预演：校验候选变更并给出变更摘要，不生效、不占版本、不写审计。"""
+    result = store.dry_run(req.config, req.expected_version)
+    logger.info(
+        "预演: expected_version=%s 结论=%s reason=%s 变更键=%s",
+        req.expected_version, result.accepted, result.reason,
+        sorted((result.changes or {}).keys()),
+    )
+    return asdict(result)
 
 
 @app.get("/flags/{flag}")
