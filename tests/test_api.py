@@ -41,3 +41,57 @@ def test_full_lifecycle():
     rb = client.post("/config/rollback", json={"target_version": base["version"]})
     assert rb.status_code == 200
     assert client.get("/flags/new-ui", params={"subject": "vip"}).json()["allowed"] is False
+
+
+def test_provenance_preview_and_audit_endpoints():
+    # 来源：热更新后 /config 的 provenance 必须同步为 RUNTIME
+    base = client.get("/config").json()
+    payload = {"max_connections": 250, "flags": {"beta": {"enabled": True, "percentage": 5}}}
+    upd = client.post("/config", json={"expected_version": base["version"], "config": payload})
+    assert upd.status_code == 200
+    cur = client.get("/config").json()
+    logger.info("热更新后 /config: config=%s provenance=%s", cur["config"], cur["provenance"])
+    assert cur["config"]["max_connections"] == 250
+    assert cur["provenance"]["max_connections"] == "RUNTIME"
+    assert cur["provenance"]["flags"] == "RUNTIME" and cur["provenance"]["flags.beta"] == "RUNTIME"
+
+    # 预演：可接受时给出变化摘要与来源预测，且不改变版本/不产生审计
+    preview = client.post("/config/preview", json={
+        "expected_version": cur["version"],
+        "config": {"max_connections": 350, "flags": {"beta": {"enabled": False}}},
+    }).json()
+    logger.info("预演响应=%s", preview)
+    assert preview["accepted"] is True
+    assert preview["base_version"] == cur["version"]
+    assert preview["would_be_version"] == cur["version"] + 1
+    assert preview["changes"]["keys"]["changed"]["max_connections"] == {"old": 250, "new": 350}
+    assert preview["changes"]["flags"]["changed"]["beta"]["enabled"] == {
+        "old": True, "new": False, "present_old": True, "present_new": True,
+    }
+    assert preview["provenance_after"]["flags.beta"] == "RUNTIME"
+    still = client.get("/config").json()
+    assert still["version"] == cur["version"] and still["config"]["max_connections"] == 250
+
+    # 预演非法配置：HTTP 200 + accepted=False，reason 可区分，生效配置不变
+    bad = client.post("/config/preview", json={"config": {"max_connections": 999999}}).json()
+    assert bad["accepted"] is False and bad["reason"] == "out_of_range"
+    stale = client.post("/config/preview", json={
+        "expected_version": 9999, "config": {"max_connections": 10},
+    }).json()
+    assert stale["accepted"] is False and stale["reason"] == "stale_version"
+
+    # 审计：成功的更新可查到版本、时间与改动内容；预演不在其中
+    audit = client.get("/config/audit").json()
+    kinds = [(r["kind"], r["version"]) for r in audit["records"]]
+    logger.info("审计列表=%s", kinds)
+    assert any(r["kind"] == "update" and r["version"] == cur["version"]
+               and r["changes"]["keys"]["changed"]["max_connections"]["new"] == 250
+               for r in audit["records"])
+    assert all("timestamp" in r and r["timestamp"] for r in audit["records"])
+
+
+def test_rollback_evicted_returns_distinct_410():
+    # 回滚一个从未存在的版本 -> 404 version_not_found
+    nf = client.post("/config/rollback", json={"target_version": 999_999})
+    logger.info("回滚不存在版本响应=%s", nf.json())
+    assert nf.status_code == 404 and nf.json()["detail"]["reason"] == "version_not_found"

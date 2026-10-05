@@ -14,6 +14,7 @@ class RejectReason(enum.Enum):
     OUT_OF_RANGE = "out_of_range"        # 取值越界
     STALE_VERSION = "stale_version"      # 基于过期版本的写入
     VERSION_NOT_FOUND = "version_not_found"  # 回滚目标版本不存在
+    VERSION_EVICTED = "version_evicted"  # 回滚目标曾存在但已被容量上限淘汰
 
 
 class ConfigRejected(Exception):
